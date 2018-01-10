@@ -1,0 +1,425 @@
+---
+title: "Credit Scoring"
+author: "ELP"
+date: "Fall 2017"
+output:
+   html_document:
+    css: hideOutput.css
+    includes:
+      in_header: hideOutput.script
+---
+```{r Knitr_Global_Options, include=FALSE}
+library("knitr")
+opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE, autodep = TRUE, tidy = FALSE)
+```
+
+We will use in this lab a dataset used in a competition at https://www.datascience.net. The aim is to assign a credit score `Y` to customer according to some characteristics. We will measure the performance of our methods with either the raw prediction error or the AUC (Area Under Curve) criterion.
+
+We have at hands a training dataset of 5380 customers that we will use during the lab and a test dataset of 1345 customers that we will use only at the very end of the lab to test our methods against unseen customers.
+
+The following table shows the description of the different variables as given in the _datascience.net_ challenge.
+
+Variable | Content | Type
+---- | ---- | ----
+BirthDate |	Client birth date |	Date
+Customer_Open_Date |	Arrival date of the client in the branch of the bank filial 	| Date
+Customer_Type |	Customer type (existing / new) |	String
+Educational_Level |	Highest Degree |	String
+Id_Customer |	Customer identifier |	Numerical
+Marital_Status |	Martital status |	String
+Nb_Of_Products |	Number of products detained by the customer at the decision date | 	Numerical
+Net_Annual_Income |	Annual income |	Numerical
+Number_Of_Dependant |	Number of dependant |	Numerical
+P_Client |	Intern categorization of the client  |	String
+Prod_Category |	Product category |	String
+Prod_Closed_Date |	Closing date of the product |	Date
+Prod_Decision_Date |	Decision date of the financing grant |	Date
+Prod_Sub_Category |	Product subcategory |	String
+Source |	Financing source (Branch / Sales) |	String
+Type_Of_Residence |	Type of residence |	String
+Years_At_Business |	Number of years in the current job | 	Numerical
+Years_At_Residence |	Number of years at the current residence place 	| Numerical
+Y |	Credit issue (to be predicted) |	Numerical
+
+# Data frame formating
+
+1. Read the training dataset __CreditTraing.csv__ with `read_csv` and check it with `glimpse`.
+
+<div class="hiddensolution">
+```{r Read_Test}
+library("tidyverse")
+CreditTraining <- read_csv("CreditTraining.csv",
+                           locale = locale(decimal_mark = ","))
+glimpse(CreditTraining)
+```
+
+```{r}
+CreditTesting <- read_csv2("CreditTesting.csv")
+glimpse(CreditTesting)
+```
+</div>
+
+2. Which variables are not well categorized and how to fix them by construction a function that can be reused for the final test dataset? We recommend the use of `dmy` from the package __lubridate__ to convert the date in a POSIX compliant format...
+
+<div class="hiddensolution">
+```{r Fix_Type}
+Fix_Type <- function(Credit) {
+Credit <- dplyr::mutate(Credit, Id_Customer = factor(Id_Customer),
+                        Y = factor(Y),
+                        BirthDate = lubridate::dmy(BirthDate),
+                        Customer_Open_Date = lubridate::dmy(Customer_Open_Date),
+                         Prod_Decision_Date = lubridate::dmy(Prod_Decision_Date),
+                        Prod_Closed_Date = lubridate::dmy(Prod_Closed_Date))
+}
+CreditTraining <- Fix_Type(CreditTraining)
+CreditTesting <- Fix_Type(CreditTesting)
+```
+</div>
+
+3. An overlooked details is the order of the levels in a factor. In particular, when using __ggplot2__, the first level of a binary variable corresponds to the color red while the second corresponds to the color green. Fix the variable `Y` and another variable for which the default alphanumeric order seems incorrect.
+
+<div class="hiddensolution">
+```{r Fix_Levels}
+summary(CreditTraining)
+Fix_Levels <- function(Credit) {
+  Credit <- dplyr::mutate(Credit, Y = factor(Y, levels = c(1,0), 
+                                      labels = c("DEFAULT","NO_DEFAULT")),
+                          Customer_Type = factor(Customer_Type, 
+                                                  levels = c("Non Existing Client", "Existing Client")),
+                          Educational_Level = factor(Educational_Level, 
+                                            levels = c("Secondary or Less",
+                                                       "Diploma",
+                                                       "University",
+                                                       "Master/PhD")))
+}
+CreditTraining <- Fix_Levels(CreditTraining)
+CreditTesting <- Fix_Levels(CreditTesting)
+```
+</div>
+
+4. We can now examine each variable individually to see if something is wrong.
+
+<div class="hiddensolution">
+```{r Variable_Inspection}
+nameCreditTraining <- names(CreditTraining)
+for (varname in nameCreditTraining[-1]) {
+  print(summary(dplyr::select(CreditTraining, one_of(varname))))
+  NbNa <-sum(is.na(CreditTraining[[varname]])); 
+  if (NbNa >0) {
+    writeLines(strwrap(paste("\n",varname,"has",NbNa, "NA")))
+  }
+  print(qplot(data = CreditTraining, get(varname), xlab = varname))
+}
+```
+</div>
+
+We can spot a few issues in some variables:
+
+- `Customer_Open_Date`: a strange peak,
+- `Number_Of_Dependant`: 2 NAs (Not Available) and a strange 20 value,
+- `Net_Annual_Income`: 2 NAs and some strange small and large values,
+- `Years_At_Business`: 2 NAs and a strange 98 value,
+- `Prod_Closed_Date`: 4206 NAs!
+
+5. Provide a quick fix for the NAs (except those in `Prod_Closed_Date`) that replace the values by the median or the mode.
+
+<div class="hiddensolution">
+```{r Fix_NA}
+ComputeMedOrMod <- function(x) {
+  if (is.factor(x)) {
+    y=levels(x)[which.max(table(x))]
+  }
+  else
+  {
+    y=median(x,na.rm=TRUE)
+  }
+  return(y)
+}
+
+NAvalue=list()
+for (name in names(CreditTraining)) {
+  NAvalue[[name]]=ComputeMedOrMod(CreditTraining[[name]])
+}
+NAvalue[["Prod_Closed_Date"]] <- NULL
+
+Fix_NA <- function(Credit, NAvalue. = NAvalue) {
+  for (name  in names(NAvalue.)) {
+    Credit[[name]][is.na(Credit[[name]])]=unlist(NAvalue.[[name]])
+  }
+  Credit
+}
+CreditTraining <- Fix_NA(CreditTraining)
+CreditTesting <- Fix_NA(CreditTesting)
+```
+</div>
+
+6. Adding a dummy variable for `Prod_Closed_Date`
+
+<div class="hiddensolution">
+```{r Fix_Prod_Closed_Date}
+Fix_Prod_Closed_Date <- function(Credit) {
+  Credit <- dplyr::mutate(Credit, Prod_Closed_Date_NA = is.na(Prod_Closed_Date))
+  Credit[["Prod_Closed_Date"]][Credit$Prod_Closed_Date_NA] = max(Credit[["Prod_Closed_Date"]], na.rm = TRUE)
+  Credit
+}
+CreditTraining <- Fix_Prod_Closed_Date(CreditTraining)
+CreditTesting <- Fix_Prod_Closed_Date(CreditTesting)
+```
+</div>
+
+7. Explore visually the dependency between `Y` and the other variables.
+
+<div class="hiddensolution">
+
+```{r Ploy_Y_Vs}
+library("scales")
+nameCreditTraining <- names(CreditTraining)
+for (varname in nameCreditTraining[-c(1,2)]) {
+  p <- ggplot(data = CreditTraining, aes(x = get(varname), fill = Y)) + xlab(varname)
+  switch(class(CreditTraining[[varname]]),
+  logical = {p <- p + geom_bar(position = "fill")},
+  numeric = {p <- p + geom_histogram(position = "fill")},
+  Date = {p <- p + geom_histogram(position = "fill")},
+  factor = {p <- p + geom_bar(position = "fill")},
+  character = {p <- p + geom_bar(position = "fill")})
+  
+  print (p + scale_y_continuous(label = percent_format())    +  theme(axis.text.x =
+            element_text(size  = 10,
+                         angle = 45,
+                         hjust = 1,
+                         vjust = 1)) )
+}
+```
+</div>
+
+8. Remove the `Id_Customer` which is useless in prediction
+
+<div class="hiddensolution">
+```{r RemoveId}
+CreditTraining <- dplyr::select(CreditTraining, -Id_Customer)
+CreditTesting <- dplyr::select(CreditTesting, -Id_Customer)
+```
+</div>
+
+# caret
+
+__caret__ is a package which provides a _unified_ interface to many _machine learning_ packages. Its basic syntax is to `train` a predictor for a given _formula_ and given _method_ from a _dataset_. For instance, if we want to train a logistic regression with the `Y ~ .` formula from the __CreditTraining__ dataset, we can use.
+
+```{r Caret_Basic}
+library(caret)
+CreditGlm <- train(Y ~ ., data = CreditTraining, method = "glm", metric = "Accuracy")
+CreditGlm
+```
+
+__caret__ computes by default the accuracy of the classifier using 25 repetitions of a boostrap resampling scheme. Once the predictor has been trained, it can be used to predict the labels.
+
+```{r Caret_Basic2}
+PredGlm <- predict(CreditGlm, newdata = CreditTraining)
+head(PredGlm)
+PredGlm_test <- predict(CreditGlm, newdata = CreditTesting)
+ProbGlm <- predict(CreditGlm, newdata = CreditTraining, type = "prob")
+head(ProbGlm)
+```
+
+__caret__ is quite versatile and one can specify accurately the way the accuracy is computed. For instance, one can impose a V-folds Cross Validation strategy with $V=5$ using the 'trainControl'.
+
+```{r Caret_Control}
+trControlCV <- trainControl(method = "CV",
+                          number = 5)
+CreditGlm <- train(Y ~ ., data = CreditTraining, method = "glm",
+                   trControl = trControlCV)
+CreditGlm
+
+PredGlm <- predict(CreditGlm, newdata = CreditTraining)
+head(PredGlm)
+
+ProbGlm <- predict(CreditGlm, newdata = CreditTraining, type = "prob")
+head(ProbGlm)
+```
+
+We provide now two functions that will be useful to compare differents models: the first one extract the accuracies for all the folds for a given model and the second one compute the average accuracy for each models.
+
+```{r Caret_Glm_Results}
+ErrsCaret <- function(model, name) {
+  Errs <- data.frame(model$resample)
+  dplyr::mutate(Errs, model = name)
+} 
+
+ErrCaretAccuracy <- function(Errs) {
+  Errs <- group_by(Errs, model)
+  cbind(dplyr::summarize(Errs, mAccuracy = mean(Accuracy, na.rm = TRUE), mKappa = mean(Kappa, na.rm = TRUE),
+                             sdAccuracy = sd(Accuracy, na.rm = TRUE), sdKappa = sd(Kappa, na.rm = TRUE)))
+}
+
+ErrsGlm <- ErrsCaret(CreditGlm, "Glm")
+ErrsGlm
+
+ErrGlm <- ErrCaretAccuracy(ErrsGlm)
+ErrGlm
+```
+
+__caret__ can use any __foreach__ parallelization package (for instance __doFuture__) to compute in parallel all the error estimates. 
+
+```{r Caret_Parallel}
+system.time(train(Y ~ ., data = CreditTraining, method = "glm",
+                   trControl = trControlCV))
+library("doFuture")
+registerDoFuture()
+plan(multiprocess)
+system.time(train(Y ~ ., data = CreditTraining, method = "glm",
+                   trControl = trControlCV))
+```
+
+Finally, we show how to obtain a ROC curve (and to compute the AUC) for a given classifier using the package __pROC__.
+
+```{r Caret_Glm_ROC}
+library(pROC)
+GlmROC <- roc(CreditTraining[["Y"]], ProbGlm[[1]])
+plot(GlmROC)
+
+auc(GlmROC)
+```
+
+We propose a __ggplot2__ interface to obtain _nice_ ROC curve.
+
+```{r Caret_Glm_ROC_ggplot}
+ToROCDF <- function(ROC, name) {
+ROCDF <- data.frame(spec = ROC[["specificities"]], sens = ROC[["sensitivities"]], model = name)
+}
+
+GlmROCDF <- ToROCDF(GlmROC, "Glm")
+
+PlotROCDF <- function(ROCDF) {
+  ggplot(data = ROCDF, aes(x = spec, y = sens, color = model)) + geom_line() + scale_x_reverse() +
+    geom_segment(aes(x = 0, y = 1, xend = 1, yend = 0), linetype = 2, color = "black")
+
+}
+PlotROCDF(GlmROCDF)
+```
+
+When the _method_ used has parameters, __caret__ choose a grid of values and conducts an automatic optimization.
+
+```{r Caret_GLM_Glmnet}
+CreditGlmnet <- train(Y ~ ., data = CreditTraining, method = "glmnet",
+                   trControl = trControlCV)
+CreditGlmnet
+
+ggplot(CreditGlmnet)
+```
+
+Note that the initial grid uses only 3 different values by parameters and is not always well chosen. This grid can be modified in the 'train' function parameters.
+
+```{r Caret_GLM_Glmnet_Grid}
+CreditGlmnet <- train(Y ~ ., data = CreditTraining, method = "glmnet",
+                   trControl = trControlCV,
+                   tuneGrid  =  expand.grid(alpha = exp(seq(-8,0, length.out = 10)), 
+                                          lambda = exp(seq(-8,0, length.out = 10))))
+CreditGlmnet
+
+ggplot(CreditGlmnet)
+```
+
+Using 'resamples', or our own functions, we can compare the different models.
+
+```{r Errs_Glm}
+summary(resamples(list(Glm = CreditGlm, Glmnet = CreditGlmnet)))
+
+Errs <- ErrsCaret(CreditGlm, "Glm")
+Errs <- rbind(Errs, ErrsCaret(CreditGlmnet, "Glmnet"))
+Errs
+
+Err <- ErrCaretAccuracy(Errs)
+Err
+```
+
+Finally, all the optimization can be performed using a different paramater than the accuracy, for instance the auc, by specifying it in the 'trainControl'.
+
+```{r Caret_Glm_ROC_Crit}
+trControlCVROC <- trainControl(method = "CV",
+                          number = 5,
+                          classProbs = TRUE,
+                          summaryFunction = twoClassSummary)
+CreditGlmROC <- train(Y ~ ., data = CreditTraining, method = "glm",
+                   trControl = trControlCVROC)
+CreditGlmROC
+
+CreditGlmnetROC <- train(Y ~ ., data = CreditTraining, method = "glmnet",
+                   trControl = trControlCVROC,
+                   tuneGrid  =  expand.grid(alpha = exp(seq(-8,0, length.out = 10)), 
+                                          lambda = exp(seq(-8,0, length.out = 10))))
+CreditGlmnetROC
+```
+
+
+1. Using the page http://topepo.github.io/caret/modelList.html, try the some of the methods seen during the lecture (Naive Bayes, k-NN, SVM, NN, Bagging, Random Forest, AdaBoost...).
+
+<div class="hiddensolution">
+```{r Credit_NB}
+CreditNB <-  train(Y ~ ., data = CreditTraining, method = "nb",
+                    trControl = trControlCV, tuneGrid = expand.grid(fL = 10, usekernel = c(TRUE, FALSE), adjust = TRUE)
+                    )
+Errs <- rbind(Errs, ErrsCaret(CreditNB, "NB"))
+```
+
+```{r Credit_kNN}
+CreditKNN <-  train(Y ~ ., data = CreditTraining, method = "knn",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditKNN, "KNN"))
+```
+
+```{r Credit_SVM}
+CreditSVM <- train(Y ~ ., data = CreditTraining, method = "svmLinear",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditSVM, "SVM"))
+
+CreditSVMPoly <- train(Y ~ ., data = CreditTraining, method = "svmPoly",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditSVMPoly, "SVMPoly"))
+
+CreditSVMRadial <- train(Y ~ ., data = CreditTraining, method = "svmRadial",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditSVMPoly, "SVMRadial"))
+```   
+
+```{r Credit_NN}
+CreditNN <- train(Y ~ ., data = CreditTraining, method = "nnet",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditNN, "NN"))
+```
+
+```{r Credit_Trees}
+CreditBagging <- train(Y ~ ., data = CreditTraining, method = "treebag",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditBagging, "Bagging"))
+
+CreditRF <- train(Y ~ ., data = CreditTraining, method = "rf",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditRF, "RF"))
+
+CreditC5 <- train(Y ~ ., data = CreditTraining, method = "C5.0",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditC5, "C5.0"))
+```
+
+```{r Credit_xgboost, eval = TRUE}
+CreditxgbLinear <- train(Y ~ ., data = CreditTraining, method = "xgbLinear",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditxgbLinear, "Xgboost"))
+
+CreditxgbTree <- train(Y ~ ., data = CreditTraining, method = "xgbTree",
+                   trControl = trControlCV)
+Errs <- rbind(Errs, ErrsCaret(CreditxgbTree, "Xgboost Tree"))
+```
+
+
+```{r Credit_Err}
+Err <- ErrCaretAccuracy(Errs)
+Err
+
+ggplot(data = Err, aes(x = model, y = mAccuracy)) + geom_point(size = 3)
+```
+</div>
+
+2. Find better parameters in the previous methods.
+
+3. Modify the input vectors (apply a function to the income, modify the date so that they are relative to the product decision date,...) to obtain better results?

@@ -1,0 +1,4 @@
+http://www.di.ens.fr/appstat/
+http://members.cbio.mines-paristech.fr/~jvert/svn/kernelcourse/course/2017mva/index.html
+http://members.cbio.mines-paristech.fr/~jvert/svn/lsml/lsml17/
+
