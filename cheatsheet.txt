@@ -1,0 +1,271 @@
+0. different approaches:
+- system oriented: how to build a system
+- statistics oriented: how to analyze and explain
+- heuristic oriented: as long as it works (deep learning, clustering, ect.)
+
+1. Idea of system oriented approach is to learn it from the real production line:
+
+It’s a complicated process included:
+• Understanding of business problem
+• Problem formalization
+• Data collecting
+• Data preprocessing
+• Modelling
+• Way to evaluate model in real life
+• Way to deploy model
+
+The competition a.s. Kaggle will only focus on Data Preprocessing and Modelling
+Aspect  Real Life    Competition
+Problem formalization Y N
+Choice of target metric Y N
+Deployment issues Y N
+Inference speed Y N
+Data collecting Y N/Y
+Model complexity Y N/Y
+Target metric value Y Y
+
+It is ok to use
+• Heuristics
+• Manual data analysis
+Do not be afraid of
+• Complex solutions
+• Advanced feature engineering
+• Doing huge calculation
+
+2. Recap
+linear model
+tree model: GBDT, ExtraTrees
+cluster model
+neural model
+
+-- no free lunch theorem: no silver bullet
+
+a very good explain for most classical algorithms with excellent visualisation
+https://arogozhnikov.github.io/
+
+a good community
+https://www.datasciencecentral.com/page/search?q=Machine+Learning
+
+some codes can be directly taken as examples:
+https://www.analyticsvidhya.com/blog/2018/03/introduction-k-neighbours-algorithm-clustering/
+
+In a competition or data analysis report, visualisation is of more importance.
+you ought to be good at the following libs;
+- seaborn (as a completion for matplotlib) https://www.datacamp.com/community/tutorials/seaborn-python-tutorial
+
+you know sklearn from head to toe.
+
+- tree algorithm
+
+(1) how to code a decision tree? (for classification and for regression)
+https://www.quora.com/How-do-decision-trees-for-regression-work
+
+(2) extremely randomized tree
+http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.65.7485&rep=rep1&type=pdf
+
+
+3 Pandas Recap
+https://stackoverflow.com/questions/25146121/extracting-just-month-and-year-from-pandas-datetime-column-python
+
+
+4 features
+features can be largely dependent on the models, a tree can be a static one, not matching a time-series feature (id of week)
+
+- Preprocessing for 
+    - tree based doesn't depend on scaling
+    - non-tree based
+- Scaling
+    - very important for knn, clustering, ect.
+    - MinMaxScaler
+    - StandardScaler
+        we should apply a chosen transformation to all numeric features
+        We use preprocessing to scale all features to one scale, so that their initial impact on the model will be roughly similar. For example, as in the recent example where we used KNN for prediction, this could lead to the case where some features will have critical influence on predictions.
+    - outliers
+        a clipping method: winsorization (Finance)
+    eg:
+    
+- Categorical and Ordinal features
+one-hot can lead to sparse matrix
+
+- Time series and geographical features
+eg: prediciton of caller churn (scenario)
+we can calculate the 
+    - categorical one: day of week
+    - difference of days between each call 1-d, 2-d difference
+eg: western australia rental prices
+eg: housing market
+
+for geographical locations, if we can add division rotation, it will simplify the tree division.
+
+center of clusters, aggregated statistics, interesting places, etc.
+
+5 explore data analysis (EDA)
+
+Dataset cleaning
+1) find null for c and r.
+# Number of NaNs for each object
+train.isnull().sum(axis=1).head(15)
+# Number of NaNs for each column
+train.isnull().sum(axis=0).head(15)
+
+
+2) remove constant features
+#concatenate two sets
+traintest = pd.concat([train, test], axis = 0)
+# `dropna = False` makes nunique treat NaNs as a distinct value
+feats_counts = train.nunique(dropna = False)
+feats_counts.sort_values()[:10]
+constant_features = feats_counts.loc[feats_counts==1].index.tolist()
+print (constant_features)
+#We found 5 constant features. Let's remove them.
+traintest.drop(constant_features,axis = 1,inplace=True)
+
+3) remove duplicate features
+# NaN cannot be easily compared, that is why we replace it by a string at first
+traintest.fillna('NaN', inplace=True)
+
+# label encoding
+train_enc =  pd.DataFrame(index = train.index)
+for col in tqdm_notebook(traintest.columns):
+    train_enc[col] = train[col].factorize()[0]
+
+dup_cols = {}
+
+for i, c1 in enumerate(tqdm_notebook(train_enc.columns)):
+    for c2 in train_enc.columns[i + 1:]:
+        if c2 not in dup_cols and np.all(train_enc[c1] == train_enc[c2]):
+            dup_cols[c2] = c1
+
+# drop duplicates
+traintest.drop(dup_cols.keys(), axis = 1,inplace=True)
+
+4) take diverse features with a threshold
+nunique = train.nunique(dropna=False)
+nunique
+# use masks
+mask = (nunique.astype(float)/train.shape[0] < 0.8) & (nunique.astype(float)/train.shape[0] > 0.4)
+train.loc[:25, mask]
+# simplest way to select columns of categorical and numericals
+cat_cols = list(train.select_dtypes(include=['object']).columns)
+num_cols = list(train.select_dtypes(exclude=['object']).columns)
+
+
+5) replace null value
+train.replace('NaN', -999, inplace=True)
+
+6) tune hyperparameters
+https://www.analyticsvidhya.com/blog/2016/02/complete-guide-parameter-tuning-gradient-boosting-gbm-python/
+http://scikit-learn.org/stable/auto_examples/model_selection/plot_randomized_search.html#sphx-glr-auto-examples-model-selection-plot-randomized-search-py
+# Define a pipeline to search for the best combination of PCA truncation
+# and classifier regularization. log indicates logistic regression
+logistic = SGDClassifier(loss='log', penalty='l2',
+                         max_iter=10000, tol=1e-5, random_state=0)
+pca = PCA()
+pipe = Pipeline(steps=[('pca', pca), ('logistic', logistic)])
+param_grid = {
+    'pca__n_components': [5, 20, 30, 40, 50, 64],
+    'logistic__alpha': np.logspace(-4, 4, 5),
+}
+search = GridSearchCV(pipe, param_grid, iid=False, cv=5,
+                      return_train_score=False)
+search.fit(X_digits, y_digits)
+print("Best parameter (CV score=%0.3f):" % search.best_score_)
+print(search.best_params_)
+results = pd.DataFrame(search.cv_results_)
+results
+
+# specify parameters and distributions to sample from
+param_dist = {"max_depth": [3, None],
+              "max_features": sp_randint(1, 11),
+              "min_samples_split": sp_randint(2, 11),
+              "bootstrap": [True, False],
+              "criterion": ["gini", "entropy"]}
+
+# run randomized search
+n_iter_search = 20
+random_search = RandomizedSearchCV(clf, param_distributions=param_dist,
+                                   n_iter=n_iter_search, cv=5)
+start = time()
+random_search.fit(X, y)
+print("RandomizedSearchCV took %.2f seconds for %d candidates"
+      " parameter settings." % ((time() - start), n_iter_search))
+
+7) add parallel
+from multiprocessing import Pool
+pool = Pool(processes=3)
+pool.map(func, input_list)
+
+6 add metrics
+
+
+7 organize codes into classes
+https://medium.com/intuitionmachine/the-meta-model-and-meta-meta-model-of-deep-learning-10062f0bf74c
+
+In general, the pipeline should be like:
+
+Optimizer <=>  Model  <=>  Objective
+                ^
+                \\
+                Layers
+
+(1) Objective
+Conventionally, Objective is a function, a.s.
+Root Mean Square Error (RMSE) 
+
+however, model evaluation is more complicated:
+http://scikit-learn.org/stable/modules/model_evaluation.html#model-evaluation
+
+We have at least:
+- classification
+    metrics.roc_auc_score
+	metrics.precision_score
+    metrics.recall_score
+    metrics.confusion_matrix: http://scikit-learn.org/stable/modules/generated/sklearn.metrics.confusion_matrix.html 
+
+from sklearn.metrics import confusion_matrix
+y_true = [2, 0, 2, 2, 0, 1]
+y_pred = [0, 0, 2, 2, 0, 2]
+confusion_matrix(y_true, y_pred)
+
+- clustering
+    rarely used...
+
+- regression
+    metrics.mean_squared_error
+    linear_model.SGD http://scikit-learn.org/stable/modules/generated/sklearn.linear_model.SGDClassifier.html#sklearn.linear_model.SGDClassifier
+    grid search http://scikit-learn.org/stable/modules/generated/sklearn.model_selection.GridSearchCV.html#sklearn.model_selection.GridSearchCV
+
+(2) visualisation
+import itertools
+import numpy as np
+import matplotlib.pyplot as plt
+
+cm = confusion_matrix(y_test, y_pred)
+plt.figure()
+plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+plt.title("title")
+plt.colorbar()
+
+classes = ["0", "1", "2"]
+tick_marks = np.arange(len(classes))
+plt.xticks(tick_marks, classes, rotation=45)
+plt.yticks(tick_marks, classes)
+
+fmt = '.2f'
+thresh = cm.max() / 2.
+for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+    plt.text(j, i, format(cm[i, j], fmt),
+             horizontalalignment="center",
+             color="white" if cm[i, j] > thresh else "black")
+
+plt.ylabel('True label')
+plt.xlabel('Predicted label')
+plt.tight_layout()
+    
+plt.show()
+
+
+Ref:
+time series:
+https://medium.com/@josemarcialportilla/using-python-and-auto-arima-to-forecast-seasonal-time-series-90877adff03c
+https://www.analyticsvidhya.com/blog/2016/02/time-series-forecasting-codes-python/
